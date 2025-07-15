@@ -13,10 +13,15 @@ from scapy.all import rdpcap, TCP
 import numpy as np
 
 # Configurações do experimento
-NUM_HOSTS = 2
-TRAFFIC_DURATION = 60
+NUM_HOSTS = 30
+TRAFFIC_DURATION = 45
+BW = 10
+DELAY = "1ms"
+LOSS = 0
+MAX_QUEUE_SIZE = 35
 # ALTERAÇÃO: O tamanho do bloco de dados (-l) no iperf para TCP é diferente. 
 # Deixaremos o padrão do iperf, que é mais realista para benchmarks.
+
 RESULTS_DIR = "incast_results_tcp"
 PCAP_FILE = f"{RESULTS_DIR}/incast_traffic.pcap"
 
@@ -28,18 +33,18 @@ def setup_environment():
     net.addController('c0')
     
     info('*** Adicionando switch e hosts\n')
-    switch = net.addSwitch('s1', stp=True) # Usar STP pode ajudar em topologias mais complexas
+    switch = net.addSwitch('s1', protocols='OpenFlow13', stp=True) # Usar STP pode ajudar em topologias mais complexas
     
     hosts = []
     for i in range(1, NUM_HOSTS + 1):
         host = net.addHost(f'h{i}')
         # ALTERAÇÃO: Buffer do switch (no link) é crucial para o Incast.
         # Um buffer pequeno (ex: max_queue_size=20) força o problema a acontecer mais cedo.
-        net.addLink(host, switch, bw=10, delay='1ms', loss=0, max_queue_size=35)
+        net.addLink(host, switch, bw=BW, delay=DELAY, loss=LOSS, max_queue_size=MAX_QUEUE_SIZE)
         hosts.append(host)
     
     receiver = net.addHost('h0')
-    net.addLink(receiver, switch, bw=10, delay='1ms', loss=0, max_queue_size=35)
+    net.addLink(receiver, switch, bw=BW, delay=DELAY, loss=LOSS, max_queue_size=MAX_QUEUE_SIZE)
     
     return net, hosts, receiver
 
@@ -133,7 +138,7 @@ def analyze_results():
     info(f"-> Dados de throughput processados e salvos em {output_file}\n")
     return throughput_data
 
-def plot_results(algoritm):
+def plot_results():
     """
     Gera o gráfico de throughput vs tempo a partir de dados já ordenados.
     """
@@ -154,7 +159,7 @@ def plot_results(algoritm):
     plt.figure(figsize=(12, 6))
     # O gráfico agora será uma linha contínua e cronologicamente correta
     plt.plot(timestamps, throughput, 'b-o', markersize=4, linewidth=2, label='Throughput Agregado')
-    plt.title(f'TCP Incast - Throughput vs Tempo - Algoritmo{algoritm}')
+    plt.title(f'TCP Incast - Throughput vs Tempo')
     plt.xlabel('Tempo (s)')
     plt.ylabel('Throughput (Mbps)')
     plt.grid(True)
@@ -208,9 +213,7 @@ def run_experiment():
         # Verifica a conectividade entre os hosts
         info('*** Testando conectividade\n')
         net.pingAll()
-        
-        default_algo = hosts[0].cmd('sysctl -n net.ipv4.tcp_congestion_control').strip()
-        
+                
         start_traffic(net, hosts, receiver)
         
         info(f'*** Experimento em andamento. Aguardando {TRAFFIC_DURATION + 5} segundos...\n')
@@ -234,7 +237,7 @@ def run_experiment():
     # Análises pós-experimento
     analyze_results()
     analyze_retransmissions()
-    plot_results(default_algo, )
+    plot_results()
     
     info('*** Experimento concluído!\n')
 
