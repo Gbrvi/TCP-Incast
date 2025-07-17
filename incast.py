@@ -13,7 +13,7 @@ from scapy.all import rdpcap, TCP
 import numpy as np
 
 # Configurações do experimento
-NUM_HOSTS = 30
+NUM_HOSTS = 55
 TRAFFIC_DURATION = 45
 BW = 10
 DELAY = "1ms"
@@ -75,6 +75,33 @@ def start_traffic(net, hosts, receiver):
         # ALTERAÇÃO: Removido '-u' (UDP) e '-b' (bandwidth). O TCP controlará a taxa.
         # O '&' executa em background, permitindo que todos os clientes comecem quase ao mesmo tempo.
         host.cmd(f'iperf -c {receiver_ip} -t {TRAFFIC_DURATION} > /dev/null 2>&1 &')
+
+def calculate_average_throughput(file_path, start_time, end_time):
+    throughput_in_window = []
+
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        print("ERRO: Arquivo não encontrado! ")
+        return
+
+    try:
+        with open(file_path, 'r') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) == 2:
+                    timestamp = float(parts[0])
+                    throughput = float(parts[1])
+                if start_time < timestamp < end_time:
+                    throughput_in_window.append(throughput)
+    except Exception as e:
+        info(f"ERRO ao calcular media de throughput {e}\n")
+        return 0
+    
+    if not throughput_in_window:
+        info(f"AVISO: Nenhum ponto de dado encontrado entre {start_time}s e {end_time}s")
+        return 0
+    
+    average_throughput = sum(throughput_in_window) / len(throughput_in_window)
+    return average_throughput
 
 def analyze_results():
     """
@@ -202,6 +229,8 @@ def analyze_retransmissions():
 def run_experiment():
     """Executa o experimento completo"""
     setLogLevel('info')
+
+    RESULTS_DIR_ABSOLUTE = "/home/almeida/TCP-Incast/incast_results_tcp"
     
     net = None
     try:
@@ -238,6 +267,21 @@ def run_experiment():
     analyze_results()
     analyze_retransmissions()
     plot_results()
+
+
+    info("*** CÁLCULO DO DESEMPENHO MÉDIO ***\n")
+    data_file_path = os.path.join(RESULTS_DIR_ABSOLUTE, "throughput_data.txt")
+    # Define a janela de 5s a 40s para um experimento de 45s
+    avg_thr = calculate_average_throughput(data_file_path, start_time=5, end_time=40) 
+    
+    # Imprime o resultado final de forma bem clara!
+    info("="*50 + "\n")
+    info(f"---> RESULTADO FINAL PARA {NUM_HOSTS} HOSTS:\n")
+    info(f"---> Throughput Agregado Médio: {avg_thr:.2f} Mbps\n")
+    info("="*50 + "\n")
+    
+    info('*** Experimento e análise concluídos!\n')
+
     
     info('*** Experimento concluído!\n')
 
