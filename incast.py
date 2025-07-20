@@ -13,8 +13,6 @@ from scapy.all import rdpcap, TCP
 import numpy as np
 
 # Configurações do experimento
-NUM_HOSTS = 55
-TRAFFIC_DURATION = 45
 BW = 10
 DELAY = "1ms"
 LOSS = 0
@@ -22,10 +20,8 @@ MAX_QUEUE_SIZE = 35
 # ALTERAÇÃO: O tamanho do bloco de dados (-l) no iperf para TCP é diferente. 
 # Deixaremos o padrão do iperf, que é mais realista para benchmarks.
 
-RESULTS_DIR = "incast_results_tcp"
-PCAP_FILE = f"{RESULTS_DIR}/incast_traffic.pcap"
 
-def setup_environment():
+def setup_environment(NUM_HOSTS, TRAFFIC_DURATION):
     """Configura o ambiente Mininet"""
     net = Mininet(controller=OVSController, link=TCLink) # ALTERAÇÃO: Usando OVSController
     
@@ -48,40 +44,34 @@ def setup_environment():
     
     return net, hosts, receiver
 
-def start_traffic(net, hosts, receiver):
-    """Inicia o tráfego TCP de todos os hosts para o receptor"""
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+def start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs):
+    """Inicia o tráfego TCP, salvando os logs no diretório ABSOLUTO especificado."""
     
     receiver_ip = receiver.IP()
-    server_log = f"{RESULTS_DIR}/iperf_server.log"
+    server_log = os.path.join(results_dir_abs, "iperf_server.log")
+    pcap_file = os.path.join(results_dir_abs, "traffic.pcap")
     
-    info(f"*** Iniciando servidor iperf TCP no receptor {receiver_ip}\n")
-    # ALTERAÇÃO: Removido '-u'. Usando TCP. '-i 1' para reportar a cada segundo.
-    receiver.cmd(f'iperf -s -i 1 > {server_log} 2>&1 &')
-    time.sleep(1) # Garante que o servidor esteja pronto
-
-    info(f"*** Iniciando captura de pacotes em {PCAP_FILE}\n")
-    # A captura na interface do receptor é suficiente e mais limpa.
-
-    # Sua Nova Abordagem - Refinada
-    switch = net.get('s1')
-    # Adicionamos 'tcp' ao final para filtrar apenas pacotes TCP
-    filter = "'tcp'" 
-    switch.cmd(f'tcpdump -i any -w {PCAP_FILE} {filter} >/dev/null 2>&1 &')
+    info(f"*** Iniciando servidor iperf em: {server_log}\n")
+    # Usando Popen para mais controle e para evitar problemas de shell
+    receiver.popen(f'iperf -s -i 1 > {server_log} 2>&1', shell=True)
     time.sleep(1)
 
-    info(f"*** Iniciando tráfego de {NUM_HOSTS} clientes TCP\n")
-    for i, host in enumerate(hosts):
-        # ALTERAÇÃO: Removido '-u' (UDP) e '-b' (bandwidth). O TCP controlará a taxa.
-        # O '&' executa em background, permitindo que todos os clientes comecem quase ao mesmo tempo.
+    info(f"*** Iniciando captura de pacotes em: {pcap_file}\n")
+    switch = net.get('s1')
+    switch.popen(f'tcpdump -i any -w {pcap_file} "tcp"', shell=True)
+    time.sleep(1)
+
+    info(f"*** Iniciando tráfego de {len(hosts)} clientes TCP\n")
+    for host in hosts:
         host.cmd(f'iperf -c {receiver_ip} -t {TRAFFIC_DURATION} > /dev/null 2>&1 &')
+
 
 def calculate_average_throughput(file_path, start_time, end_time):
     throughput_in_window = []
 
     if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
         print("ERRO: Arquivo não encontrado! ")
-        return
+        return 0
 
     try:
         with open(file_path, 'r') as f:
@@ -103,73 +93,74 @@ def calculate_average_throughput(file_path, start_time, end_time):
     average_throughput = sum(throughput_in_window) / len(throughput_in_window)
     return average_throughput
 
-def analyze_results():
-    """
-    Analisa o log do iperf de forma robusta. Primeiro tenta encontrar as linhas
-    agregadas [SUM]. Se não encontrar, recorre a uma análise mais genérica.
-    """
-
-    RESULTS_DIR_ABSOLUTE = "/home/almeida/TCP-Incast/incast_results_tcp"
-
-    server_log = os.path.join(RESULTS_DIR_ABSOLUTE, "iperf_server.log")
+def analyze_results(results_dir):
+    server_log = os.path.join(results_dir, "iperf_server.log")
     throughput_data = []
     
-    info(f"*** Analisando o arquivo de log do iperf: {server_log}\n")
     if not os.path.exists(server_log) or os.path.getsize(server_log) == 0:
         info(f"ERRO: Arquivo de log '{server_log}' não encontrado ou vazio.\n")
         return []
 
-    # Plano A: Tenta encontrar as linhas agregadas [SUM]
+    # Regex aprimorada para capturar o valor e a unidade (K, M, G, etc.)
+    # Ex: "  1.25 Mbits/sec" -> grupo 1: "1.25", grupo 2: "M"
+    # Ex: "  850  Kbits/sec" -> grupo 1: "850",  grupo 2: "K"
+    # Ex: "  900   bits/sec" -> grupo 1: "900",  grupo 2: "" (vazio)
+    regex = re.compile(r'\[SUM\].*?([\d\.]+)\s+([KMGT]?)bits/sec')
+    # Regex de fallback, caso não haja linhas [SUM]
+    fallback_regex = re.compile(r'\[\s*\d+\].*?([\d\.]+)\s+([KMGT]?)bits/sec')
+
+    lines_found = False
     try:
         with open(server_log, 'r') as f:
             for line in f:
-                match = re.search(r'\[SUM\].*?([\d\.]+-[\d\.]+)\s*sec.*?([\d\.]+)\s*Mbits/sec', line)
+                match = regex.search(line)
+                # Se não achar [SUM], tenta a regex de fallback na mesma linha
+                if not match:
+                    match = fallback_regex.search(line)
+
                 if match:
-                    timestamp = float(match.group(1).split('-')[1])
-                    throughput = float(match.group(2))
-                    throughput_data.append((timestamp, throughput))
+                    lines_found = True
+                    value = float(match.group(1))
+                    unit = match.group(2)
+                    
+                    # Normaliza o valor para Mbits/sec
+                    throughput_mbps = 0
+                    if unit == 'G':
+                        throughput_mbps = value * 1000
+                    elif unit == 'M':
+                        throughput_mbps = value
+                    elif unit == 'K':
+                        throughput_mbps = value / 1000
+                    else: # Se a unidade for vazia, significa bits/sec
+                        throughput_mbps = value / 1000000
+
+                    # Pega o timestamp final do intervalo. Ex: "0.0-1.0" -> 1.0
+                    ts_match = re.search(r'([\d\.]+-[\d\.]+)\s*sec', line)
+                    if ts_match:
+                        timestamp = float(ts_match.group(1).split('-')[1])
+                        throughput_data.append((timestamp, throughput_mbps))
+    
     except Exception as e:
-        info(f"ERRO durante a leitura do log: {e}\n")
+        info(f"ERRO ao processar o arquivo de log: {e}\n")
         return []
+    
+    if not lines_found:
+        info("AVISO: Nenhuma linha de relatório de throughput válida foi encontrada no log.\n")
 
-    # Plano B: Se o Plano A não encontrou dados, usa a regex genérica
-    if not throughput_data:
-        info("AVISO: Nenhuma linha [SUM] encontrada. Recorrendo à análise genérica de throughput.\n")
-        try:
-            with open(server_log, 'r') as f:
-                for line in f:
-                    # Usando a regex original, mais abrangente
-                    match = re.search(r'\[\s*\d+\]\s*([\d\.]+-[\d\.]+)\s*sec.*\s+([\d\.]+)\s*Mbits/sec', line)
-                    if match:
-                        timestamp = float(match.group(1).split('-')[1])
-                        throughput = float(match.group(2))
-                        throughput_data.append((timestamp, throughput))
-        except Exception as e:
-            info(f"ERRO durante a leitura do log no Plano B: {e}\n")
-            return []
-
-    # Verificação final: Se ainda não há dados, encerra.
-    if not throughput_data:
-        info("ERRO CRÍTICO: Não foi possível extrair nenhum dado de throughput do log.\n")
-        return []
-
-    # Ordena os dados encontrados (seja do Plano A ou B)
-    throughput_data.sort(key=lambda x: x[0])
-
-    # Salva os dados para plotagem
-    output_file = os.path.join(RESULTS_DIR_ABSOLUTE, "throughput_data.txt")
+     # ADIÇÃO IMPORTANTE: Salvar o arquivo de dados para as outras funções usarem
+    output_file = os.path.join(results_dir, "throughput_data.txt")
     with open(output_file, 'w') as f:
         for t, thr in throughput_data:
             f.write(f"{t} {thr}\n")
-    
-    info(f"-> Dados de throughput processados e salvos em {output_file}\n")
+            
     return throughput_data
 
-def plot_results():
+
+def plot_results(results_dir):
     """
     Gera o gráfico de throughput vs tempo a partir de dados já ordenados.
     """
-    data_file = f'{RESULTS_DIR}/throughput_data.txt'
+    data_file = os.path.join(results_dir, "throughput_data.txt") # Usa o caminho dinâmico
     if not os.path.exists(data_file) or os.path.getsize(data_file) == 0:
         info(f"Arquivo de dados '{data_file}' não encontrado ou vazio. Pulando plotagem.\n")
         return
@@ -194,12 +185,14 @@ def plot_results():
     plt.xlim(left=0)
     plt.legend()
     
-    output_file = f'{RESULTS_DIR}/throughput_vs_time_corrigido.png'
+    output_file = os.path.join(results_dir, 'throughput_vs_time.png') # Salva no lugar certo
     plt.savefig(output_file)
-    info(f"*** Gráfico corrigido salvo em {output_file}\n")
+    info(f"*** Gráfico salvo em {output_file}\n")
 
-def analyze_retransmissions():
+def analyze_retransmissions(results_dir):
     """Analisa o arquivo pcap para detectar retransmissões TCP."""
+
+    PCAP_FILE = os.path.join(results_dir, "traffic.pcap")
     if not os.path.exists(PCAP_FILE) or os.path.getsize(PCAP_FILE) == 0:
         info(f"ERRO: Arquivo de captura '{PCAP_FILE}' não encontrado ou vazio.\n")
         return 0
@@ -226,64 +219,96 @@ def analyze_retransmissions():
         info(f"Erro ao analisar pacotes: {e}\n")
         return 0
 
-def run_experiment():
-    """Executa o experimento completo"""
+def run_all_hosts():
     setLogLevel('info')
-
-    RESULTS_DIR_ABSOLUTE = "/home/almeida/TCP-Incast/incast_results_tcp"
     
-    net = None
+    # Defina aqui a lista de hosts que você quer testar
+    host_counts = [1, 5, 10, 20, 30, 40, 50]
+    experiment_duration = 60
+    
+    final_results = {}
+
+    info("--- INICIANDO CAMPANHA DE EXPERIMENTOS DE INCAST ---\n")
+
+    for n_hosts in host_counts:
+        avg_throughput = run_single_experiment(n_hosts, experiment_duration)
+        final_results[n_hosts] = avg_throughput
+        info(f"---> Resultado para {n_hosts} hosts: {avg_throughput:.2f} Mbps\n")
+
+    info("--- CAMPANHA DE EXPERIMENTOS CONCLUÍDA ---\n")
+    info("Resultados Finais:\n")
+    for hosts, thr in final_results.items():
+        info(f"{hosts} hosts: {thr:.2f} Mbps")
+
+    # Plotando o gráfico final do "penhasco"
+    hosts_x = sorted(final_results.keys())
+    throughputs_y = [final_results[h] for h in hosts_x]
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(hosts_x, throughputs_y, 'r-o', linewidth=2, markersize=8)
+    plt.title('Análise de Escalabilidade: Throughput vs. Número de Hosts (TCP Incast)', fontsize=16)
+    plt.xlabel('Número de Hosts Concorrentes', fontsize=12)
+    plt.ylabel('Throughput Agregado Médio (Mbps)', fontsize=12)
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.ylim(bottom=0)
+    plt.xlim(left=0)
+    
+    output_file = 'grafico_final_penhasco_incast.png'
+    plt.savefig(output_file)
+    info(f"\nGráfico final salvo em: {output_file}\n")
+
+def run_single_experiment(NUM_HOST, TRAFFIC_DURATION):
+    """Executa o experimento completo com permissões e caminhos garantidos."""
+    
+    results_dir_relative = f"run_{NUM_HOST}_hosts"
+    results_dir_abs = os.path.abspath(results_dir_relative)
+
+    # PASSO 1: Criar o diretório E garantir que ele tenha permissões abertas
     try:
-        net, hosts, receiver = setup_environment()
-        
-        info('*** Iniciando rede\n')
+        os.makedirs(results_dir_abs, exist_ok=True)
+        os.chmod(results_dir_abs, 0o777) # Permissão total (leitura/escrita/execução para todos)
+        info(f"Diretório de resultados '{results_dir_abs}' criado/verificado com permissões 777.\n")
+    except Exception as e:
+        info(f"Falha ao criar ou definir permissões para o diretório: {e}\n")
+        return 0 # Retorna 0 para indicar falha
+
+    net, hosts, receiver = setup_environment(NUM_HOST, TRAFFIC_DURATION) # Sua função de setup
+    
+    info(f"*** Iniciando experimento para {NUM_HOST} hosts... ***\n")
+    
+    try:
         net.start()
+        net.pingAll(timeout='1')
         
-        # Verifica a conectividade entre os hosts
-        info('*** Testando conectividade\n')
-        net.pingAll()
-                
-        start_traffic(net, hosts, receiver)
+        # PASSO 2: Passa o caminho ABSOLUTO para a função start_traffic
+        start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs)
         
-        info(f'*** Experimento em andamento. Aguardando {TRAFFIC_DURATION + 5} segundos...\n')
-        time.sleep(TRAFFIC_DURATION + 5)
-        
-        # As análises agora são feitas após o término do experimento
+        info(f'*** Experimento em andamento. Aguardando {TRAFFIC_DURATION + 10} segundos...\n')
+        time.sleep(TRAFFIC_DURATION + 10)
         
     except Exception as e:
         info(f"ERRO durante a execução do Mininet: {e}\n")
     finally:
         if net:
-            info('*** Encerrando processos (iperf, tcpdump)\n')
-            # Garante que todos os processos em background sejam terminados
-            for host in net.hosts:
-                host.cmd('kill %iperf')
-                host.cmd('kill %tcpdump')
-            
-            info('*** Encerrando rede\n')
+            info('*** Encerrando processos e a rede...\n')
+            for node in net.hosts + net.switches:
+                node.cmd('killall -q iperf tcpdump')
             net.stop()
 
-    # Análises pós-experimento
-    analyze_results()
-    analyze_retransmissions()
-    plot_results()
-
-
-    info("*** CÁLCULO DO DESEMPENHO MÉDIO ***\n")
-    data_file_path = os.path.join(RESULTS_DIR_ABSOLUTE, "throughput_data.txt")
-    # Define a janela de 5s a 40s para um experimento de 45s
-    avg_thr = calculate_average_throughput(data_file_path, start_time=5, end_time=40) 
+    # --- Análise Pós-Experimento ---
+    info(f"*** Análise para {NUM_HOST} hosts... ***\n")
     
-    # Imprime o resultado final de forma bem clara!
-    info("="*50 + "\n")
-    info(f"---> RESULTADO FINAL PARA {NUM_HOSTS} HOSTS:\n")
-    info(f"---> Throughput Agregado Médio: {avg_thr:.2f} Mbps\n")
-    info("="*50 + "\n")
+    # Passa o caminho absoluto para as funções de análise
+    throughput_data = analyze_results(results_dir_abs)
     
-    info('*** Experimento e análise concluídos!\n')
+    # ... (você pode chamar as outras análises aqui se quiser os resultados por execução)
+    # analyze_retransmissions(results_dir_abs)
+    # plot_results(results_dir_abs)
 
-    
-    info('*** Experimento concluído!\n')
+    data_file_path = os.path.join(results_dir_abs, "throughput_data.txt")
+    avg_throughput = calculate_average_throughput(data_file_path, start_time=5, end_time=TRAFFIC_DURATION)
+
+    return avg_throughput
 
 if __name__ == '__main__':
-    run_experiment()
+    run_all_hosts()
