@@ -223,8 +223,8 @@ def run_all_hosts():
     setLogLevel('info')
     
     # Defina aqui a lista de hosts que você quer testar
-    host_counts = [1, 5, 10, 20, 30, 40, 50]
-    experiment_duration = 60
+    host_counts = [1, 2, 3, 4]
+    experiment_duration = 20
     
     final_results = {}
 
@@ -247,7 +247,7 @@ def run_all_hosts():
     plt.figure(figsize=(10, 6))
     plt.plot(hosts_x, throughputs_y, 'r-o', linewidth=2, markersize=8)
     plt.title('Análise de Escalabilidade: Throughput vs. Número de Hosts (TCP Incast)', fontsize=16)
-    plt.xlabel('Número de Hosts Concorrentes', fontsize=12)
+    plt.xlabel('Número de Hosts Concor60rentes', fontsize=12)
     plt.ylabel('Throughput Agregado Médio (Mbps)', fontsize=12)
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
     plt.ylim(bottom=0)
