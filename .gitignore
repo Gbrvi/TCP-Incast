@@ -208,5 +208,5 @@ __marimo__/
 
 # Project
 incast_results_tcp/
-.png
+*.png
 run*
