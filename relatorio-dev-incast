@@ -1,4 +1,0 @@
-26/09/25: Controlador mininet nao funcionava de jeito nenhum. APós inumeras tentativas, a unica solução viavel foi instalar openvswitch-testcontrolle (Descobrir que OVS-Controller foi desativado) e após isso criar um alias para ele ser chamado de Controller: 
-sudo ln /usr/bin/ovs-controller /usr/bin/controller
-
-(https://installfights.blogspot.com/2016/09/cannot-find-required-executable.html)

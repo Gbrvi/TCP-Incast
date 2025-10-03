@@ -66,3 +66,97 @@ def start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs, algor
     for host in hosts:
         host.cmd(f'iperf -c {receiver_ip} -t {TRAFFIC_DURATION} > /dev/null 2>&1 &')
 
+def configure_network_post_start(net, algorithm, hosts, receiver):
+    info(f"*** Aplicando configurações para o algoritmo: {algorithm.upper()} ***\n")
+
+    # --- PASSO 1: Configurar os Hosts ---
+    for host in hosts:
+        if algorithm == 'dctcp':
+            host.cmd('sysctl -w net.ipv4.tcp_ecn=1')
+        else:
+            host.cmd('sysctl -w net.ipv4.tcp_ecn=2')
+        host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
+        # Verificação
+        check_algo = host.cmd('sysctl net.ipv4.tcp_congestion_control').strip()
+        info(f"--> Host {host.name}: Verificação do algoritmo -> {check_algo}\n")
+
+    # --- PASSO 2: Configurar o Switch (se necessário) ---
+    if algorithm == 'dctcp':
+        info("--> Configurando o switch para marcar pacotes ECN...\n")
+        switch = net.get('s1')
+        receiver_intf = receiver.defaultIntf()
+        link = receiver_intf.link
+        switch_port_intf = link.intf1 if link.intf1 != receiver_intf else link.intf2
+        switch_port_name = switch_port_intf.name
+        
+        info(f"--> Aplicando QoS/ECN na porta correta do switch: {switch_port_name}\n")
+        
+        # --- CORREÇÃO: Comandos OVS combinados em uma única transação atômica ---
+        max_rate = str(BW * 1000000)
+        kthresh = str(int(MAX_QUEUE_SIZE * 0.5))
+        
+        # Primeiro, limpa qualquer configuração antiga para garantir
+        switch.cmd(f'ovs-vsctl -- clear Port {switch_port_name} qos')
+
+        # Agora, cria e aplica a nova configuração em um único passo
+        switch.cmd(
+            f'ovs-vsctl -- --id=@newqos create QoS type=linux-htb other-config:max-rate={max_rate} queues=0=@q0 '
+            f'-- --id=@q0 create Queue other-config:min-rate={max_rate} other-config:max-rate={max_rate} other-config:ecn=true other-config:kthresh={kthresh} '
+            f'-- set Port {switch_port_name} qos=@newqos'
+        )
+        # --- FIM DA CORREÇÃO ---
+
+        # Verificação final
+        info("--> Verificando configuração de QoS aplicada:\n")
+        switch.cmdPrint(f'ovs-vsctl list Port {switch_port_name}')
+
+    info("*** Configurações de rede aplicadas. ***\n")
+
+    
+def configure_network_post_start(net, algorithm, hosts, receiver):
+    info(f"*** Aplicando configurações para o algoritmo: {algorithm.upper()} ***\n")
+
+    # --- PASSO 1: Configurar os Hosts ---
+    for host in hosts:
+        if algorithm == 'dctcp':
+            host.cmd('sysctl -w net.ipv4.tcp_ecn=1')
+        else:
+            host.cmd('sysctl -w net.ipv4.tcp_ecn=2')
+        host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
+        # Verificação
+        check_algo = host.cmd('sysctl net.ipv4.tcp_congestion_control').strip()
+        info(f"--> Host {host.name}: Verificação do algoritmo -> {check_algo}\n")
+
+    # --- PASSO 2: Configurar o Switch (se necessário) ---
+    if algorithm == 'dctcp':
+        info("--> Configurando o switch para marcar pacotes ECN...\n")
+        switch = net.get('s1')
+        receiver_intf = receiver.defaultIntf()
+        link = receiver_intf.link
+        switch_port_intf = link.intf1 if link.intf1 != receiver_intf else link.intf2
+        switch_port_name = switch_port_intf.name
+        
+        info(f"--> Aplicando QoS/ECN na porta correta do switch: {switch_port_name}\n")
+        
+        # --- CORREÇÃO: Comandos OVS combinados em uma única transação atômica ---
+        max_rate = str(BW * 1000000)
+        kthresh = str(int(MAX_QUEUE_SIZE * 0.5))
+        
+        # Primeiro, limpa qualquer configuração antiga para garantir
+        switch.cmd(f'ovs-vsctl -- clear Port {switch_port_name} qos')
+
+        # Agora, cria e aplica a nova configuração em um único passo
+        switch.cmd(
+            f'ovs-vsctl -- --id=@newqos create QoS type=linux-htb other-config:max-rate={max_rate} queues=0=@q0 '
+            f'-- --id=@q0 create Queue other-config:min-rate={max_rate} other-config:max-rate={max_rate} other-config:ecn=true other-config:kthresh={kthresh} '
+            f'-- set Port {switch_port_name} qos=@newqos'
+        )
+        # --- FIM DA CORREÇÃO ---
+
+        # Verificação final
+        info("--> Verificando configuração de QoS aplicada:\n")
+        switch.cmdPrint(f'ovs-vsctl list Port {switch_port_name}')
+
+    info("*** Configurações de rede aplicadas. ***\n")
+
+

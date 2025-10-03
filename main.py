@@ -6,7 +6,7 @@ from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 from mininet.link import TCLink
 from analyse import calculate_average_throughput, analyze_results, analyze_retransmissions, plot_results
-from environment import start_traffic, setup_environment
+from environment import start_traffic, setup_environment, configure_network_post_start
 import time
 import os
 import re # ALTERAÇÃO: Importado para parsing com expressões regularesgit 
@@ -18,9 +18,9 @@ def run_all_hosts():
     setLogLevel('info')
     
     # Defina aqui a lista de hosts que você quer testar
-    host_counts = [10, 20, 30]
-    experiment_duration = 10
-    algorithms_to_test = ['cubic', 'reno']
+    host_counts = [40]
+    experiment_duration = 30
+    algorithms_to_test = ['dctcp']
     final_results = {}
 
     info("--- INICIANDO CAMPANHA DE EXPERIMENTOS DE INCAST ---\n")
@@ -97,9 +97,18 @@ def run_single_experiment(NUM_HOST, TRAFFIC_DURATION, algorithm):
         net.start()
         info(f"Configurando o algoritmo TCP '{algorithm}' nos hosts de envio...\n")
         for host in hosts:
-            host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
-        net.pingAll(timeout='1')
-        
+            if algorithm == 'dctcp':
+                # Para o DCTCP, precisamos habilitar o ECN primeiro
+                host.cmd('sysctl -w net.ipv4.tcp_ecn=1')
+                host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
+            else:
+                # Para outros, garantimos que o ECN esteja no padrão (desligado ou passivo)
+                host.cmd('sysctl -w net.ipv4.tcp_ecn=2') 
+                host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
+                info(f"Configurando o algoritmo TCP '{algorithm}' nos hosts de envio...\n")
+
+        configure_network_post_start(net, algorithm, hosts, receiver)
+            
         # PASSO 2: Passa o caminho ABSOLUTO para a função start_traffic
         start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs, algorithm)
         
