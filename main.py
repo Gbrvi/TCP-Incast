@@ -18,46 +18,68 @@ def run_all_hosts():
     setLogLevel('info')
     
     # Defina aqui a lista de hosts que você quer testar
-    host_counts = [3]
+    host_counts = [10, 20, 30]
     experiment_duration = 10
-    
+    algorithms_to_test = ['cubic', 'reno']
     final_results = {}
 
     info("--- INICIANDO CAMPANHA DE EXPERIMENTOS DE INCAST ---\n")
 
-    for n_hosts in host_counts:
-        avg_throughput = run_single_experiment(n_hosts, experiment_duration)
-        final_results[n_hosts] = avg_throughput
-        info(f"---> Resultado para {n_hosts} hosts: {avg_throughput:.2f} Mbps\n")
+    for algo in algorithms_to_test:
+        final_results[algo] = {}
+        info(f"\n======== TESTANDO ALGORITMO: {algo.upper()} ========\n")
+        for n_hosts in host_counts:
+            # CORREÇÃO: Passando o terceiro argumento 'algo'
+            avg_throughput = run_single_experiment(n_hosts, experiment_duration, algo)
+            final_results[algo][n_hosts] = avg_throughput
 
     info("--- CAMPANHA DE EXPERIMENTOS CONCLUÍDA ---\n")
     info("Resultados Finais:\n")
-    for hosts, thr in final_results.items():
-        info(f"{hosts} hosts: {thr:.2f} Mbps")
+    # --- CORREÇÃO: Loop aninhado para imprimir o resumo corretamente ---
+    for algo, results in final_results.items():
+        info(f"--- Algoritmo: {algo.upper()} ---")
+        # Ordena os resultados por número de hosts para uma impressão limpa
+        for n_hosts in sorted(results.keys()):
+            throughput = results[n_hosts]
+            info(f"  {n_hosts} hosts: {throughput:.2f} Mbps")
 
-    # Plotando o gráfico final do "penhasco"
-    hosts_x = sorted(final_results.keys())
-    throughputs_y = [final_results[h] for h in hosts_x]
+      # Plotando o gráfico final (o código de plotagem que você já tem está ótimo)
+    plt.figure(figsize=(12, 7))
     
-    plt.figure(figsize=(10, 6))
-    plt.plot(hosts_x, throughputs_y, 'r-o', linewidth=2, markersize=8)
-    plt.title('Análise de Escalabilidade: Throughput vs. Número de Hosts (TCP Incast)', fontsize=16)
-    plt.xlabel('Número de Hosts Concor60rentes', fontsize=12)
+    colors = {'cubic': 'r', 'reno': 'b'}
+    markers = {'cubic': 'o', 'reno': 's'}
+
+    for algo, results in final_results.items():
+        hosts_x = sorted(results.keys())
+        throughputs_y = [results[h] for h in hosts_x]
+        plt.plot(hosts_x, throughputs_y, color=colors.get(algo, 'k'), 
+                 marker=markers.get(algo, 'x'), linestyle='-', 
+                 linewidth=2, markersize=8, label=algo.upper())
+
+    plt.title('Análise Comparativa: Throughput vs. Número de Hosts (TCP Incast)', fontsize=16)
+    plt.xlabel('Número de Hosts Concorrentes', fontsize=12)
     plt.ylabel('Throughput Agregado Médio (Mbps)', fontsize=12)
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.legend()
     plt.ylim(bottom=0)
     plt.xlim(left=0)
     
+    
+    output_file = 'grafico_comparativo_cubic_vs_reno.png'
+    plt.savefig(output_file, dpi=300)
+    info(f"\nGráfico comparativo final salvo em: {output_file}\n")
+
     output_file = 'grafico_final_penhasco_incast.png'
     plt.savefig(output_file)
     info(f"\nGráfico final salvo em: {output_file}\n")
 
-def run_single_experiment(NUM_HOST, TRAFFIC_DURATION):
+def run_single_experiment(NUM_HOST, TRAFFIC_DURATION, algorithm):
     """Executa o experimento completo com permissões e caminhos garantidos."""
     
-    results_dir_relative = f"run_{NUM_HOST}_hosts"
+    results_dir_relative = f"run_{NUM_HOST}_hosts_{algorithm}"  
     results_dir_abs = os.path.abspath(results_dir_relative)
 
+    
     # PASSO 1: Criar o diretório E garantir que ele tenha permissões abertas
     try:
         os.makedirs(results_dir_abs, exist_ok=True)
@@ -67,16 +89,19 @@ def run_single_experiment(NUM_HOST, TRAFFIC_DURATION):
         info(f"Falha ao criar ou definir permissões para o diretório: {e}\n")
         return 0 # Retorna 0 para indicar falha
 
+    info(f"*** Iniciando: {NUM_HOST} hosts, Algoritmo: {algorithm.upper()} ***\n")    
+
     net, hosts, receiver = setup_environment(NUM_HOST, TRAFFIC_DURATION) # Sua função de setup
-    
-    info(f"*** Iniciando experimento para {NUM_HOST} hosts... ***\n")
     
     try:
         net.start()
+        info(f"Configurando o algoritmo TCP '{algorithm}' nos hosts de envio...\n")
+        for host in hosts:
+            host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
         net.pingAll(timeout='1')
         
         # PASSO 2: Passa o caminho ABSOLUTO para a função start_traffic
-        start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs)
+        start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs, algorithm)
         
         info(f'*** Experimento em andamento. Aguardando {TRAFFIC_DURATION + 10} segundos...\n')
         time.sleep(TRAFFIC_DURATION + 10)
@@ -100,10 +125,16 @@ def run_single_experiment(NUM_HOST, TRAFFIC_DURATION):
     # analyze_retransmissions(results_dir_abs)
     # plot_results(results_dir_abs)
 
+
+    info(f"*** Análise para {NUM_HOST} hosts ({algorithm})... ***\n")
+    
+    analyze_results(results_dir_abs) # Esta função agora cria o throughput_data.txt
+    
     data_file_path = os.path.join(results_dir_abs, "throughput_data.txt")
     avg_throughput = calculate_average_throughput(data_file_path, start_time=5, end_time=TRAFFIC_DURATION)
+    
+    return avg_throughput if avg_throughput is not None else 0
 
-    return avg_throughput
 
 if __name__ == '__main__':
-    run_all_hosts()
+   run_all_hosts()

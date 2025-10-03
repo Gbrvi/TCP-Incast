@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from mininet.net import Mininet
-from mininet.node import Controller, OVSController # ALTERAÇÃO: Importado OVSController
+from mininet.node import Controller # ALTERAÇÃO: Importado OVSController
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 from mininet.link import TCLink
@@ -24,7 +24,7 @@ MAX_QUEUE_SIZE = 35
 
 def setup_environment(NUM_HOSTS, TRAFFIC_DURATION):
     """Configura o ambiente Mininet"""
-    net = Mininet(controller=OVSController, link=TCLink) # ALTERAÇÃO: Usando OVSController
+    net = Mininet(controller=Controller, link=TCLink, cleanup=True) #
     
     info('*** Adicionando controlador\n')
     net.addController('c0')
@@ -45,7 +45,7 @@ def setup_environment(NUM_HOSTS, TRAFFIC_DURATION):
     
     return net, hosts, receiver
 
-def start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs):
+def start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs, algorithm):
     """Inicia o tráfego TCP, salvando os logs no diretório ABSOLUTO especificado."""
     
     receiver_ip = receiver.IP()
@@ -65,3 +65,4 @@ def start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs):
     info(f"*** Iniciando tráfego de {len(hosts)} clientes TCP\n")
     for host in hosts:
         host.cmd(f'iperf -c {receiver_ip} -t {TRAFFIC_DURATION} > /dev/null 2>&1 &')
+

@@ -15,6 +15,7 @@ def calculate_average_throughput(file_path, start_time, end_time):
 
     if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
         print("ERRO: Arquivo não encontrado! ")
+        print("Está aqui")
         return 0
 
     try:
