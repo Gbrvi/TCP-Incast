@@ -17,7 +17,7 @@ import numpy as np
 BW = 10
 DELAY = "1ms"
 LOSS = 0
-MAX_QUEUE_SIZE = 35
+MAX_QUEUE_SIZE = 15
 # ALTERAÇÃO: O tamanho do bloco de dados (-l) no iperf para TCP é diferente. 
 # Deixaremos o padrão do iperf, que é mais realista para benchmarks.
 

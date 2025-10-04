@@ -18,9 +18,9 @@ def run_all_hosts():
     setLogLevel('info')
     
     # Defina aqui a lista de hosts que você quer testar
-    host_counts = [40]
-    experiment_duration = 30
-    algorithms_to_test = ['dctcp']
+    host_counts = [5, 10, 25, 40]
+    experiment_duration = 40
+    algorithms_to_test = ['cubic']
     final_results = {}
 
     info("--- INICIANDO CAMPANHA DE EXPERIMENTOS DE INCAST ---\n")
@@ -73,43 +73,43 @@ def run_all_hosts():
     plt.savefig(output_file)
     info(f"\nGráfico final salvo em: {output_file}\n")
 
+# Em main.py
+
 def run_single_experiment(NUM_HOST, TRAFFIC_DURATION, algorithm):
-    """Executa o experimento completo com permissões e caminhos garantidos."""
+    """
+    Executa um único experimento de forma limpa e autocontida.
+    """
     
+    # 1. CRIA UM DIRETÓRIO ÚNICO E SEGURO PARA ESTE EXPERIMENTO
     results_dir_relative = f"run_{NUM_HOST}_hosts_{algorithm}"  
     results_dir_abs = os.path.abspath(results_dir_relative)
-
-    
-    # PASSO 1: Criar o diretório E garantir que ele tenha permissões abertas
     try:
         os.makedirs(results_dir_abs, exist_ok=True)
-        os.chmod(results_dir_abs, 0o777) # Permissão total (leitura/escrita/execução para todos)
-        info(f"Diretório de resultados '{results_dir_abs}' criado/verificado com permissões 777.\n")
+        os.chmod(results_dir_abs, 0o777)
+        info(f"Diretório de resultados: '{results_dir_abs}'\n")
     except Exception as e:
-        info(f"Falha ao criar ou definir permissões para o diretório: {e}\n")
-        return 0 # Retorna 0 para indicar falha
+        info(f"Falha ao criar diretório: {e}\n")
+        return 0
 
-    info(f"*** Iniciando: {NUM_HOST} hosts, Algoritmo: {algorithm.upper()} ***\n")    
-
-    net, hosts, receiver = setup_environment(NUM_HOST, TRAFFIC_DURATION) # Sua função de setup
+    # 2. CONFIGURA E INICIA A REDE
+    # (setup_environment deve usar a combinação estável: DefaultController e LinuxBridge/OVSSwitch)
+    net, hosts, receiver = setup_environment(NUM_HOST, TRAFFIC_DURATION) # Sua função de setup está em environment.py
     
     try:
         net.start()
-        info(f"Configurando o algoritmo TCP '{algorithm}' nos hosts de envio...\n")
-        for host in hosts:
-            if algorithm == 'dctcp':
-                # Para o DCTCP, precisamos habilitar o ECN primeiro
-                host.cmd('sysctl -w net.ipv4.tcp_ecn=1')
-                host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
-            else:
-                # Para outros, garantimos que o ECN esteja no padrão (desligado ou passivo)
-                host.cmd('sysctl -w net.ipv4.tcp_ecn=2') 
-                host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
-                info(f"Configurando o algoritmo TCP '{algorithm}' nos hosts de envio...\n")
 
-        configure_network_post_start(net, algorithm, hosts, receiver)
+        # --- CORREÇÃO FINAL: Adicione a regra de otimização de volta! ---
+        # Isso tira o controlador Python lento do caminho dos dados.
+        info('*** Otimizando o OVS com regra de fluxo para máxima performance do plano de dados...\n')
+        switch = net.get('s1')
+        switch.cmd('ovs-ofctl add-flow s1 "priority=0,actions=NORMAL"')
+        
+        # 3. CONFIGURA O AMBIENTE (ALGORITMO, ECN, ETC.) - PONTO ÚNICO DE CONFIGURAÇÃO
+        # A função configure_network_post_start de environment.py faz todo o trabalho
+        # configure_network_post_start(net, algorithm, hosts, receiver)
             
-        # PASSO 2: Passa o caminho ABSOLUTO para a função start_traffic
+        # 4. INICIA O TRÁFEGO
+        # A função start_traffic de environment.py faz todo o trabalho
         start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs, algorithm)
         
         info(f'*** Experimento em andamento. Aguardando {TRAFFIC_DURATION + 10} segundos...\n')
@@ -124,24 +124,22 @@ def run_single_experiment(NUM_HOST, TRAFFIC_DURATION, algorithm):
                 node.cmd('killall -q iperf tcpdump')
             net.stop()
 
-    # --- Análise Pós-Experimento ---
-    info(f"*** Análise para {NUM_HOST} hosts... ***\n")
-    
-    # Passa o caminho absoluto para as funções de análise
-    throughput_data = analyze_results(results_dir_abs)
-    
-    # ... (você pode chamar as outras análises aqui se quiser os resultados por execução)
-    # analyze_retransmissions(results_dir_abs)
-    # plot_results(results_dir_abs)
-
-
+    # 5. ANÁLISE PÓS-EXPERIMENTO - FLUXO DE DADOS CORRETO
     info(f"*** Análise para {NUM_HOST} hosts ({algorithm})... ***\n")
     
-    analyze_results(results_dir_abs) # Esta função agora cria o throughput_data.txt
+    # Etapa A: analyze_results processa o log bruto e CRIA o arquivo throughput_data.txt
+    analyze_results(results_dir_abs)
     
+    # Etapa B: As outras funções de análise agora podem usar os arquivos gerados
+    # no diretório correto.
+    analyze_retransmissions(results_dir_abs)
+    plot_results(results_dir_abs)
+
+    # Etapa C: calculate_average_throughput lê o arquivo limpo criado na Etapa A
     data_file_path = os.path.join(results_dir_abs, "throughput_data.txt")
-    avg_throughput = calculate_average_throughput(data_file_path, start_time=5, end_time=TRAFFIC_DURATION)
+    avg_throughput = calculate_average_throughput(data_file_path, start_time=5, end_time=TRAFFIC_DURATION + 10)
     
+    # 6. RETORNA O RESULTADO FINAL
     return avg_throughput if avg_throughput is not None else 0
 
 

@@ -25,8 +25,8 @@ def calculate_average_throughput(file_path, start_time, end_time):
                 if len(parts) == 2:
                     timestamp = float(parts[0])
                     throughput = float(parts[1])
-                if start_time < timestamp < end_time:
-                    throughput_in_window.append(throughput)
+                    if start_time < timestamp < end_time:
+                        throughput_in_window.append(throughput)
     except Exception as e:
         info(f"ERRO ao calcular media de throughput {e}\n")
         return 0
@@ -38,61 +38,66 @@ def calculate_average_throughput(file_path, start_time, end_time):
     average_throughput = sum(throughput_in_window) / len(throughput_in_window)
     return average_throughput
 
+
 def analyze_results(results_dir):
+    """
+    Analisa o log do iperf de forma robusta. Se não houver linhas [SUM],
+    ele AGORA agrupa e soma os fluxos individuais por intervalo de tempo.
+    """
     server_log = os.path.join(results_dir, "iperf_server.log")
-    throughput_data = []
     
     if not os.path.exists(server_log) or os.path.getsize(server_log) == 0:
         info(f"ERRO: Arquivo de log '{server_log}' não encontrado ou vazio.\n")
         return []
 
-    # Regex aprimorada para capturar o valor e a unidade (K, M, G, etc.)
-    # Ex: "  1.25 Mbits/sec" -> grupo 1: "1.25", grupo 2: "M"
-    # Ex: "  850  Kbits/sec" -> grupo 1: "850",  grupo 2: "K"
-    # Ex: "  900   bits/sec" -> grupo 1: "900",  grupo 2: "" (vazio)
-    regex = re.compile(r'\[SUM\].*?([\d\.]+)\s+([KMGT]?)bits/sec')
-    # Regex de fallback, caso não haja linhas [SUM]
-    fallback_regex = re.compile(r'\[\s*\d+\].*?([\d\.]+)\s+([KMGT]?)bits/sec')
+    has_sum_lines = False
+    with open(server_log, 'r') as f:
+        if '[SUM]' in f.read():
+            has_sum_lines = True
 
-    lines_found = False
+    throughput_data = []
+    # Dicionário temporário para agrupar dados: { timestamp: total_throughput }
+    temp_data = {}
+
+    regex = re.compile(r'\[(.*)\].*?([\d\.]+)-([\d\.]+)\s*sec.*?([\d\.]+)\s+([KMGT]?)bits/sec')
+
     try:
         with open(server_log, 'r') as f:
             for line in f:
                 match = regex.search(line)
-                # Se não achar [SUM], tenta a regex de fallback na mesma linha
-                if not match:
-                    match = fallback_regex.search(line)
-
                 if match:
-                    lines_found = True
-                    value = float(match.group(1))
-                    unit = match.group(2)
+                    tag, start_time, end_time, value, unit = match.groups()
+                    tag = tag.strip()
+
+                    # Se o log tem linhas SUM, só processamos elas.
+                    if has_sum_lines and tag != 'SUM':
+                        continue
                     
                     # Normaliza o valor para Mbits/sec
                     throughput_mbps = 0
-                    if unit == 'G':
-                        throughput_mbps = value * 1000
-                    elif unit == 'M':
-                        throughput_mbps = value
-                    elif unit == 'K':
-                        throughput_mbps = value / 1000
-                    else: # Se a unidade for vazia, significa bits/sec
-                        throughput_mbps = value / 1000000
+                    if unit == 'G': throughput_mbps = float(value) * 1000
+                    elif unit == 'M': throughput_mbps = float(value)
+                    elif unit == 'K': throughput_mbps = float(value) / 1000
+                    else: throughput_mbps = float(value) / 1000000
 
-                    # Pega o timestamp final do intervalo. Ex: "0.0-1.0" -> 1.0
-                    ts_match = re.search(r'([\d\.]+-[\d\.]+)\s*sec', line)
-                    if ts_match:
-                        timestamp = float(ts_match.group(1).split('-')[1])
-                        throughput_data.append((timestamp, throughput_mbps))
-    
+                    timestamp = float(end_time)
+
+                    # Agrega os valores por timestamp
+                    if timestamp not in temp_data:
+                        temp_data[timestamp] = 0
+                    temp_data[timestamp] += throughput_mbps
+
+        # Converte o dicionário agregado de volta para a lista de tuplas
+        throughput_data = sorted(temp_data.items())
+
     except Exception as e:
-        info(f"ERRO ao processar o arquivo de log: {e}\n")
+        info(f"ERRO ao processar o arquivo de log '{server_log}': {e}\n")
         return []
     
-    if not lines_found:
-        info("AVISO: Nenhuma linha de relatório de throughput válida foi encontrada no log.\n")
+    if not throughput_data:
+        info(f"AVISO: Nenhuma linha de relatório de throughput válida foi encontrada em {server_log}.\n")
 
-     # ADIÇÃO IMPORTANTE: Salvar o arquivo de dados para as outras funções usarem
+    # Salva o arquivo de dados
     output_file = os.path.join(results_dir, "throughput_data.txt")
     with open(output_file, 'w') as f:
         for t, thr in throughput_data:
@@ -151,12 +156,16 @@ def analyze_retransmissions(results_dir):
         seq_nums = {}
         retransmissions = 0
         for p in tcp_packets:
+            # --- CORREÇÃO: Garante que o pacote tem uma camada IPv4 antes de acessá-la ---
+            # Isso faz com que o código ignore pacotes TCP que não sejam sobre IPv4 (como IPv6).
+            if p.haslayer('IP'):
+                ip_layer = p.getlayer('IP')
+                key = (ip_layer.src, ip_layer.dst, p[TCP].sport, p[TCP].dport, p[TCP].seq)
             # Chave única para um fluxo (origem, destino) e número de sequência
-            key = (p.getlayer('IP').src, p.getlayer('IP').dst, p[TCP].sport, p[TCP].dport, p[TCP].seq)
-            if key in seq_nums:
-                retransmissions += 1
-            else:
-                seq_nums[key] = True
+                if key in seq_nums:
+                    retransmissions += 1
+                else:
+                    seq_nums[key] = True
         
         info(f"Total de retransmissões TCP detectadas: {retransmissions}\n")
         return retransmissions
