@@ -14,10 +14,10 @@ from scapy.all import rdpcap, TCP
 import numpy as np
 
 # Configurações do experimento
-BW = 10
-DELAY = "1ms"
+BW = 1000
+DELAY = "5ms"
 LOSS = 0
-MAX_QUEUE_SIZE = 35
+MAX_QUEUE_SIZE = 200
 # ALTERAÇÃO: O tamanho do bloco de dados (-l) no iperf para TCP é diferente. 
 # Deixaremos o padrão do iperf, que é mais realista para benchmarks.
 
@@ -64,5 +64,10 @@ def start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs, algor
 
     info(f"*** Iniciando tráfego de {len(hosts)} clientes TCP\n")
     for host in hosts:
-        host.cmd(f'iperf -c {receiver_ip} -t {TRAFFIC_DURATION} > /dev/null 2>&1 &')
+        host.cmd(f'iperf -c {receiver_ip} -l 64k -t {TRAFFIC_DURATION} > /dev/null 2>&1 &')
+
+def check_config(hosts):
+    for host in hosts:
+        check_algo = host.cmd('sysctl net.ipv4.tcp_congestion_control').strip()
+        info(f"--> Host {host.name}: Verificação do algoritmo -> {check_algo}\n")
 

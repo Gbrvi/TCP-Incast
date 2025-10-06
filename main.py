@@ -6,7 +6,7 @@ from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 from mininet.link import TCLink
 from analyse import calculate_average_throughput, analyze_results, analyze_retransmissions, plot_results
-from environment import start_traffic, setup_environment
+from environment import start_traffic, setup_environment, check_config
 import time
 import os
 import re # ALTERAÇÃO: Importado para parsing com expressões regularesgit 
@@ -18,9 +18,9 @@ def run_all_hosts():
     setLogLevel('info')
     
     # Defina aqui a lista de hosts que você quer testar
-    host_counts = [10, 20, 30]
-    experiment_duration = 10
-    algorithms_to_test = ['cubic', 'reno']
+    host_counts = [1, 5, 10, 15, 20, 25]
+    experiment_duration = 40
+    algorithms_to_test = ['reno', 'vegas', 'cubic']
     final_results = {}
 
     info("--- INICIANDO CAMPANHA DE EXPERIMENTOS DE INCAST ---\n")
@@ -99,6 +99,8 @@ def run_single_experiment(NUM_HOST, TRAFFIC_DURATION, algorithm):
         for host in hosts:
             host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
         net.pingAll(timeout='1')
+
+        check_config(hosts)
         
         # PASSO 2: Passa o caminho ABSOLUTO para a função start_traffic
         start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs, algorithm)
@@ -118,20 +120,16 @@ def run_single_experiment(NUM_HOST, TRAFFIC_DURATION, algorithm):
     # --- Análise Pós-Experimento ---
     info(f"*** Análise para {NUM_HOST} hosts... ***\n")
     
-    # Passa o caminho absoluto para as funções de análise
-    throughput_data = analyze_results(results_dir_abs)
-    
     # ... (você pode chamar as outras análises aqui se quiser os resultados por execução)
     # analyze_retransmissions(results_dir_abs)
     # plot_results(results_dir_abs)
-
 
     info(f"*** Análise para {NUM_HOST} hosts ({algorithm})... ***\n")
     
     analyze_results(results_dir_abs) # Esta função agora cria o throughput_data.txt
     
     data_file_path = os.path.join(results_dir_abs, "throughput_data.txt")
-    avg_throughput = calculate_average_throughput(data_file_path, start_time=5, end_time=TRAFFIC_DURATION)
+    avg_throughput = calculate_average_throughput(data_file_path, start_time=5, end_time=TRAFFIC_DURATION + 10)
     
     return avg_throughput if avg_throughput is not None else 0
 
