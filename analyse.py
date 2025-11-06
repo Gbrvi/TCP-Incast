@@ -25,8 +25,8 @@ def calculate_average_throughput(file_path, start_time, end_time):
                 if len(parts) == 2:
                     timestamp = float(parts[0])
                     throughput = float(parts[1])
-                if start_time < timestamp < end_time:
-                    throughput_in_window.append(throughput)
+                    if start_time < timestamp < end_time:
+                        throughput_in_window.append(throughput)
     except Exception as e:
         info(f"ERRO ao calcular media de throughput {e}\n")
         return 0
