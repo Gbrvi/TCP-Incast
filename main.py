@@ -6,7 +6,7 @@ from mininet.cli import CLI
 from mininet.log import setLogLevel, info
 from mininet.link import TCLink
 from analyse import calculate_average_throughput, analyze_results, analyze_retransmissions, plot_results
-from environment import start_traffic, setup_environment, check_config
+from environment import start_traffic, setup_environment, check_config, configure_network_post_start
 import time
 import os
 import re # ALTERAÇÃO: Importado para parsing com expressões regularesgit 
@@ -18,9 +18,9 @@ def run_all_hosts():
     setLogLevel('info')
     
     # Defina aqui a lista de hosts que você quer testar
-    host_counts = [1, 5, 10, 15, 20, 25]
-    experiment_duration = 40
-    algorithms_to_test = ['reno', 'vegas', 'cubic']
+    host_counts = [1, 2, 3, 5]
+    experiment_duration = 30
+    algorithms_to_test = ['cubic']
     final_results = {}
 
     info("--- INICIANDO CAMPANHA DE EXPERIMENTOS DE INCAST ---\n")
@@ -100,7 +100,7 @@ def run_single_experiment(NUM_HOST, TRAFFIC_DURATION, algorithm):
             host.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={algorithm}')
         net.pingAll(timeout='1')
 
-        check_config(hosts)
+        configure_network_post_start(net, algorithm, hosts, receiver)
         
         # PASSO 2: Passa o caminho ABSOLUTO para a função start_traffic
         start_traffic(net, hosts, receiver, TRAFFIC_DURATION, results_dir_abs, algorithm)
